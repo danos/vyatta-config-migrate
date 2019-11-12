@@ -1,0 +1,120 @@
+#!/usr/bin/perl
+# Copyright (c) 2019, AT&T Intellectual Property. All rights reserved.
+#
+# Copyright (c) 2015-2016 by Brocade Communications Systems, Inc.
+# All rights reserved.
+#
+# SPDX-License-Identifier: GPL-2.0-only
+
+# migration for dhcp-server/dhcpv6-server shared-network-name
+# static-mapping to dhcp-server/dhcpv6-server static-mapping.
+
+use strict;
+use lib "/opt/vyatta/share/perl5/";
+use XorpConfigParser;
+
+my $orig_cfg = shift;
+exit 1 if (!defined($orig_cfg));
+
+my $xcp = new XorpConfigParser();
+$xcp->parse($orig_cfg);
+
+# setup interface hash by name
+my %imap = ();
+my $interfaces_node = $xcp->get_node( ['interfaces'] );
+foreach my $child ( @{ $interfaces_node->{children} } ) {
+    if ( $child->{'name'} =~ /^(.*)\s+(.*)/ ) {
+        my $intf_name = $2;
+        $imap{$2} = $child;
+        for my $interface ( @{ $child->{children} } ) {
+            if ( $interface->{'name'} =~ /^vif\s+(.*)/ ) {
+                $imap{"$intf_name.$1"} = $interface;
+            }
+        }
+    }
+}
+
+# service dhcp-server
+#
+my $node = $xcp->get_node( [ 'service', 'dhcp-server' ] );
+if ( defined($node) ) {
+    foreach my $child ( @{ $node->{children} } ) {
+        next unless ( $child->{'name'} =~ /^shared-network-name / );
+        foreach my $net ( @{ $child->{children} } ) {
+            next unless ( $net->{'name'} =~ /^subnet / );
+            foreach my $host ( @{ $net->{children} } ) {
+                next unless ( $host->{'name'} =~ /^static-mapping / );
+
+                $xcp->comment_out_node($host);
+                foreach my $map ( @{ $host->{children} } ) {
+                    $xcp->create_node(
+                        [
+                            'service',       'dhcp-server',
+                            $host->{'name'}, $map->{'name'}
+                        ]
+                    );
+                }
+            }
+        }
+    }
+
+    # ensure listento interface is valid
+    foreach my $child ( @{ $node->{children} } ) {
+        next unless ( $child->{'name'} =~ /^listento/ );
+        foreach my $listento ( @{ $child->{children} } ) {
+            if ( $listento->{'name'} =~ /^interface\s+(.*)/ ) {
+                next if defined $imap{$1};
+                $xcp->comment_out_node($listento);
+            }
+        }
+    }
+}
+
+# service dhcpv6-server
+#
+my $node = $xcp->get_node( [ 'service', 'dhcpv6-server' ] );
+if ( defined($node) ) {
+    foreach my $child ( @{ $node->{children} } ) {
+        next unless ( $child->{'name'} =~ /^shared-network-name / );
+        foreach my $net ( @{ $child->{children} } ) {
+            next unless ( $net->{'name'} =~ /^subnet / );
+            foreach my $host ( @{ $net->{children} } ) {
+                next unless ( $host->{'name'} =~ /^static-mapping / );
+
+                $xcp->comment_out_node($host);
+                foreach my $map ( @{ $host->{children} } ) {
+                    $xcp->create_node(
+                        [
+                            'service',       'dhcpv6-server',
+                            $host->{'name'}, $map->{'name'}
+                        ]
+                    );
+                }
+            }
+        }
+    }
+
+    # ensure listento interface is valid
+    foreach my $child ( @{ $node->{children} } ) {
+        next unless ( $child->{'name'} =~ /^listento/ );
+        foreach my $listento ( @{ $child->{children} } ) {
+            if ( $listento->{'name'} =~ /^interface\s+(.*)/ ) {
+                next if defined $imap{$1};
+                $xcp->comment_out_node($listento);
+            }
+        }
+    }
+}
+
+my $tmpfile = "/tmp/vyatta_migrate_dhcp_server.$$";
+open(TMPFILE, ">$tmpfile") or exit 1;
+select TMPFILE;
+
+$xcp->output(0);
+
+close TMPFILE;
+
+my $ret = system("mv $tmpfile $orig_cfg");
+exit 1 if ($ret >> 8);
+
+exit 0;

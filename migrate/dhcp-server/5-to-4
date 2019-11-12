@@ -1,0 +1,133 @@
+#!/usr/bin/perl
+# Copyright (c) 2019, AT&T Intellectual Property. All rights reserved.
+#
+# Copyright (c) 2015 by Brocade Communications Systems, Inc.
+# All rights reserved.
+#
+# SPDX-License-Identifier: GPL-2.0-only
+
+
+# migration for dhcp-server/dhcpv6-server static-mapping to
+# dhcp-server/dhcpv6-server shared-network-name static-mapping.
+
+use strict;
+use lib "/opt/vyatta/share/perl5/";
+use XorpConfigParser;
+use NetAddr::IP;
+
+my $orig_cfg = shift;
+exit 1 if (!defined($orig_cfg));
+
+my $xcp = new XorpConfigParser();
+$xcp->parse($orig_cfg);
+
+# service dhcp-server
+#
+my $node = $xcp->get_node( [ 'service', 'dhcp-server' ] );
+if ( defined($node) ) {
+
+    my %smap     = ();
+    my $children = $node->{'children'};
+
+    # build a hash of the subnets
+    foreach my $child (@$children) {
+        next unless ( $child->{'name'} =~ /^shared-network-name / );
+        foreach my $net ( @{ $child->{children} } ) {
+            if ( $net->{'name'} =~ /^subnet\s+(.*)/ ) {
+                $smap{$1}{net}    = $child;
+                $smap{$1}{subnet} = $net;
+            }
+        }
+    }
+
+    # determine the subnet for the static-mapping
+    my $children = $node->{'children'};
+    foreach my $child (@$children) {
+        next unless ( $child->{'name'} =~ /^static-mapping / );
+        $xcp->comment_out_node($child);
+        foreach my $map ( @{ $child->{children} } ) {
+            if ( $map->{'name'} =~ /^ip-address\s+(.*)/ ) {
+                my $ip_address = $1;
+                foreach my $subnet ( keys %smap ) {
+                    my $naipIP      = new NetAddr::IP($ip_address);
+                    my $naipNetwork = new NetAddr::IP("$subnet");
+                    next unless ( $naipIP->within($naipNetwork) );
+                    push( @{ $smap{$subnet}{map} }, $child );
+                    last;
+                }
+            }
+        }
+    }
+
+    # write out the static-mapping configuration
+    foreach my $subnet ( keys %smap ) {
+        if ( defined( $smap{$subnet}{net} )
+            && ( defined( $smap{$subnet}{map} ) ) )
+        {
+            my @mapping = $smap{$subnet}{map};
+            foreach my $map ( @{ $smap{$subnet}{map} } ) {
+                foreach my $attr ( @{ $map->{children} } ) {
+                    $xcp->create_node(
+                        [
+                            'service',
+                            'dhcp-server',
+                            $smap{$subnet}{net}->{'name'},
+                            $smap{$subnet}{subnet}->{'name'},
+                            $map->{'name'},
+                            $attr->{'name'}
+                        ]
+                    );
+                }
+            }
+        }
+    }
+}
+
+# service dhcpv6-server
+#
+my $node = $xcp->get_node( ['service', 'dhcpv6-server'] );
+if (defined($node)) {
+
+ my $children = $node->{'children'};
+ my $found_net;
+ my $found_subnet;
+
+ foreach my $child (@$children) {
+
+    next unless ( $child->{'name'} =~ /^shared-network-name / );
+    foreach my $net (@{ $child->{children} } ) {
+        $found_net = $child;
+        $found_subnet = $net;
+        last;
+    }
+    if ( defined($found_subnet ) ) {
+        last;
+    }
+ }
+
+ foreach my $child (@$children) {
+
+    next unless ( $child->{'name'} =~ /^static-mapping / );
+
+    $xcp->comment_out_node($child);
+    if ( defined($found_subnet) ) {
+	foreach my $map (@{ $child->{children} } ) {
+            $xcp->create_node( [ 'service', 'dhcpv6-server', $found_net->{'name'}, $found_subnet->{'name'}, $child->{'name'}, $map->{'name'} ] );
+	}
+    }
+ }
+}
+
+
+my $tmpfile = "/tmp/vyatta_migrate_dhcp_server.$$";
+open(TMPFILE, ">$tmpfile") or exit 1;
+select TMPFILE;
+
+$xcp->output(0);
+
+close TMPFILE;
+
+my $ret = system("mv $tmpfile $orig_cfg");
+exit 1 if ($ret >> 8);
+
+exit 0;

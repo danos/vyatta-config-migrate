@@ -1,0 +1,13 @@
+#!/bin/sh
+# Copyright (c) 2019, AT&T Intellectual Property. All rights reserved.
+#
+# Copyright (c) 2014 by Brocade Communications Systems, Inc.
+# All rights reserved.
+#
+# SPDX-License-Identifier: GPL-2.0-only
+
+
+#migrate from glendale to hollywood
+# nothing to do for dhcp-server 2-to-3
+exit 0
+

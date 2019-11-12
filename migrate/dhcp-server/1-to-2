@@ -1,0 +1,14 @@
+#!/bin/sh
+# Copyright (c) 2019, AT&T Intellectual Property. All rights reserved.
+#
+# Copyright (c) 2014, 2016 by Brocade Communications Systems, Inc.
+# All rights reserved.
+#
+# SPDX-License-Identifier: GPL-2.0-only
+
+
+# migrate config file to new DHCP server CLI syntax.
+# arg: <config_file>
+
+/opt/vyatta/sbin/XorpConfigMigrator.pl  --input="$1"  --output="$1" --action=migrate_service_dhcp_server_1_to_2
+
